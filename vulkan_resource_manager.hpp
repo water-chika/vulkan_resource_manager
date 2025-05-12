@@ -80,7 +80,7 @@ public:
 		m_pools.emplace_back(pool);
 	}
 
-	auto allocate_descriptor_set() {
+	auto allocate() {
 		vk::DescriptorSet set{};
 		try {
 			set = allocate_descriptor_set_without_increase_pool();
@@ -92,7 +92,7 @@ public:
 		return set;
 	}
 
-	void free_descriptor_set(vk::DescriptorSet set) {
+	void free(vk::DescriptorSet set) {
 		auto pool = m_set_pool_map[set];
 		m_device.freeDescriptorSets(pool, set);
 	}
@@ -188,87 +188,6 @@ private:
 	std::vector<vk::Semaphore> m_semaphores;
 };
 
-class task_manager{
-public:
-	struct task_resource {
-		vk::DescriptorSet descriptor_set;
-	};
-
-	task_manager(vk::Device device,
-		descriptor_set_manager descriptor_set_manager,
-		fence_manager fence_manager)
-		:
-		m_device{ device },
-		m_descriptor_set_manager{ std::move(descriptor_set_manager) },
-		m_fence_manager{ std::move(fence_manager) }
-	{}
-
-	~task_manager() {
-		if (!m_running_tasks.empty()) {
-			auto fences = std::vector<vk::Fence>(m_running_tasks.size());
-			std::transform(m_running_tasks.begin(), m_running_tasks.end(),
-				fences.begin(),
-				[](auto pair) {return pair.first; });
-
-			auto res = m_device.waitForFences(fences, true, std::numeric_limits<uint64_t>::max());
-			assert(res == vk::Result::eSuccess);
-		}
-	}
-
-	task_manager(const task_manager&) = delete;
-	task_manager(task_manager&&) = default;
-	task_manager& operator=(const task_manager&) = delete;
-	task_manager& operator=(task_manager&&) = default;
-
-	void add_task(vk::Fence fence, task_resource resource) {
-		m_running_tasks.emplace(fence, resource);
-	}
-
-	auto running_task_count() {
-		return m_running_tasks.size();
-	}
-
-	bool exist_task_complemented() {
-		std::vector<vk::Fence> fences(m_running_tasks.size());
-		std::transform(m_running_tasks.begin(), m_running_tasks.end(), fences.begin(),
-			[](auto pair) {
-				return pair.first;
-			});
-		return vk::Result::eSuccess == m_device.waitForFences(fences, false, 0);
-	}
-
-	void recycle() {
-		auto released_fences = std::vector<vk::Fence>{};
-		for (auto [fence, resource] : m_running_tasks) {
-			if (vk::Result::eSuccess == m_device.waitForFences({ fence }, true, 0)) {
-				release(resource);
-				released_fences.emplace_back(fence);
-			}
-		}
-		for (auto fence : released_fences) {
-			m_running_tasks.erase(fence);
-			m_fence_manager.free_fence(fence);
-		}
-	}
-
-	auto allocate_resource() {
-		auto fence = m_fence_manager.allocate_fence();
-		auto descriptor_set = m_descriptor_set_manager.allocate_descriptor_set();
-		return std::pair{ fence, task_resource{ descriptor_set } };
-	}
-
-	void release(task_resource resource) {
-		auto [set] = resource;
-		m_descriptor_set_manager.free_descriptor_set(set);
-	}
-
-private:
-	vk::Device m_device;
-	descriptor_set_manager m_descriptor_set_manager;
-	fence_manager m_fence_manager;
-	std::unordered_map<VkFence, task_resource> m_running_tasks;
-};
-
 template<typename Resource, typename ResourceAllocator>
 class resource_manager {
 public:
@@ -345,6 +264,8 @@ private:
 	ResourceAllocator m_resource_allocator;
 	std::unordered_map<VkFence, Resource> m_fence_resources;
 };
+
+using task_manager = resource_manager<vk::DescriptorSet, descriptor_set_manager>;
 
 class queue_manager {
 public:
