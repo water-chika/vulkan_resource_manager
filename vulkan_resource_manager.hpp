@@ -35,12 +35,12 @@ public:
 		m_device{ device },
 		m_layout{ layout },
 		m_pool_sizes{ pool_sizes },
-		m_pools{},
-		m_set_pool_map{}
-	{}
+		m_pools{}
+	{
+		increase_pool();
+	}
 
 	~descriptor_set_manager() {
-		m_set_pool_map.clear();
 		for (auto pool : m_pools) {
 			try {
 				m_device.destroyDescriptorPool(pool);
@@ -58,24 +58,11 @@ public:
 	descriptor_set_manager& operator=(descriptor_set_manager&&) = default;
 
 	auto allocate_descriptor_set_without_increase_pool() {
-		for (auto pool : m_pools) {
-			if (m_pool_full[pool]) continue;
-
-			try {
-				auto set = m_device.allocateDescriptorSets(
-					vk::DescriptorSetAllocateInfo{}.setDescriptorPool(pool).setSetLayouts(m_layout).setDescriptorSetCount(1)
-				)[0];
-				m_set_pool_map.emplace(set, pool);
-				return set;
-			}
-			catch (vk::OutOfPoolMemoryError& e) {
-				m_pool_full[pool] = true;
-			}
-			catch (...) {
-
-			}
-		}
-		throw std::runtime_error{ "all pools could not allocate descriptor set" };
+		auto pool = m_pools.back();
+		auto set = m_device.allocateDescriptorSets(
+			vk::DescriptorSetAllocateInfo{}.setDescriptorPool(pool).setSetLayouts(m_layout).setDescriptorSetCount(1)
+		)[0];
+		return set;
 	}
 
 	void increase_pool() {
@@ -83,34 +70,37 @@ public:
 			vk::DescriptorPoolCreateInfo{}.setPoolSizes(m_pool_sizes).setMaxSets(256)
 		);
 		m_pools.emplace_back(pool);
-		m_pool_full[pool] = false;
 	}
 
 	auto allocate() {
 		vk::DescriptorSet set{};
-		try {
-			set = allocate_descriptor_set_without_increase_pool();
+		if (!m_sets.empty()) {
+			set = m_sets.back();
+			m_sets.pop_back();
 		}
-		catch (...) {
-			increase_pool();
-			set = allocate_descriptor_set_without_increase_pool();
+		else {
+			try {
+				set = allocate_descriptor_set_without_increase_pool();
+			}
+			catch (vk::OutOfPoolMemoryError& error) {
+				increase_pool();
+				set = allocate_descriptor_set_without_increase_pool();
+			}
 		}
 		return set;
 	}
 
 	void free(vk::DescriptorSet set) {
-		auto pool = m_set_pool_map[set];
-		m_device.freeDescriptorSets(pool, set);
-		m_pool_full[pool] = false;
+		m_sets.emplace_back(set);
 	}
 
 private:
 	vk::Device m_device;
 	vk::DescriptorSetLayout m_layout;
 	std::vector<vk::DescriptorPool> m_pools;
-	std::unordered_map<VkDescriptorPool, bool> m_pool_full;
 	std::vector<vk::DescriptorPoolSize> m_pool_sizes;
-	std::unordered_map<VkDescriptorSet, vk::DescriptorPool> m_set_pool_map;
+
+	std::vector<vk::DescriptorSet> m_sets;
 };
 class fence_manager {
 public:
