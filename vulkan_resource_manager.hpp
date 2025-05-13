@@ -59,12 +59,17 @@ public:
 
 	auto allocate_descriptor_set_without_increase_pool() {
 		for (auto pool : m_pools) {
+			if (m_pool_full[pool]) continue;
+
 			try {
 				auto set = m_device.allocateDescriptorSets(
 					vk::DescriptorSetAllocateInfo{}.setDescriptorPool(pool).setSetLayouts(m_layout).setDescriptorSetCount(1)
 				)[0];
 				m_set_pool_map.emplace(set, pool);
 				return set;
+			}
+			catch (vk::OutOfPoolMemoryError& e) {
+				m_pool_full[pool] = true;
 			}
 			catch (...) {
 
@@ -78,6 +83,7 @@ public:
 			vk::DescriptorPoolCreateInfo{}.setPoolSizes(m_pool_sizes).setMaxSets(256)
 		);
 		m_pools.emplace_back(pool);
+		m_pool_full[pool] = false;
 	}
 
 	auto allocate() {
@@ -95,12 +101,14 @@ public:
 	void free(vk::DescriptorSet set) {
 		auto pool = m_set_pool_map[set];
 		m_device.freeDescriptorSets(pool, set);
+		m_pool_full[pool] = false;
 	}
 
 private:
 	vk::Device m_device;
 	vk::DescriptorSetLayout m_layout;
 	std::vector<vk::DescriptorPool> m_pools;
+	std::unordered_map<VkDescriptorPool, bool> m_pool_full;
 	std::vector<vk::DescriptorPoolSize> m_pool_sizes;
 	std::unordered_map<VkDescriptorSet, vk::DescriptorPool> m_set_pool_map;
 };
