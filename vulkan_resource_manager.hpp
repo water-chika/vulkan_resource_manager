@@ -3,7 +3,7 @@
 #include <unordered_map>
 
 #include <vulkan/vulkan.hpp>
-
+#include <vulkan/vulkan_hash.hpp>
 #undef max
 
 namespace vulkan_resource_manage {
@@ -28,6 +28,16 @@ private:
 	vk::CommandPool m_pool;
 };
 
+static inline std::vector<vk::DescriptorPoolSize> to_pool_sizes(std::unordered_map<vk::DescriptorType, uint32_t> type_counts) {
+	std::vector<vk::DescriptorPoolSize> pool_sizes(type_counts.size());
+	std::transform(type_counts.begin(), type_counts.end(), pool_sizes.begin(),
+		[](auto type_count) {
+			auto [type, count] = type_count;
+			return vk::DescriptorPoolSize{}.setType(type).setDescriptorCount(count);
+		});
+	return pool_sizes;
+}
+
 class descriptor_set_manager {
 public:
 	descriptor_set_manager(vk::Device device, vk::DescriptorSetLayout layout, std::vector<vk::DescriptorPoolSize> pool_sizes)
@@ -39,6 +49,9 @@ public:
 	{
 		increase_pool();
 	}
+	descriptor_set_manager(vk::Device device, vk::DescriptorSetLayout layout, std::unordered_map<vk::DescriptorType, uint32_t> type_counts)
+		: descriptor_set_manager{ device, layout, to_pool_sizes(type_counts) }
+	{}
 
 	~descriptor_set_manager() {
 		for (auto pool : m_pools) {
